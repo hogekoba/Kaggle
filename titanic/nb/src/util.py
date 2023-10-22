@@ -26,6 +26,7 @@ import lightgbm as lgb
 import warnings
 warnings.filterwarnings("ignore")
 
+from IPython.core.display import display
 
 # matplotilbで日本語表示したい場合はこれをinstallしてインポートする
 import japanize_matplotlib
@@ -65,52 +66,55 @@ params = {
 }
 
 # 目的関数
-def objective(trial):
-    # 探索するハイパーパラメータ
-    params_tuning = {
-        "num_leaves": trial.suggest_int("num_leaves", 8, 256),
-        "min_data_in_leaf": trial.suggest_int("min_data_in_leaf", 5, 200),
-        "min_sum_hessian_in_leaf": trial.suggest_float("min_sum_hessian_in_leaf", 1e-5, 1e-2, log=True),
-        "feature_fraction": trial.suggest_float("feature_fraction", 0.5, 1.0),
-        "bagging_fraction": trial.suggest_float("bagging_fraction", 0.5, 1.0),
-        "lambda_l1": trial.suggest_float("lambda_l1", 1e-2, 1e2, log=True),
-        "lambda_l2": trial.suggest_float("lambda_l2", 1e-2, 1e2, log=True),
-    }
-    params_tuning.update(params_base)
-    
-    # モデル学習・評価
-    list_metrics = []
-    cv = list(StratifiedKFold(n_splits=5, shuffle=True, random_state=123).split(x_train, y_train))
-    for nfold in np.arange(5):
-        idx_tr, idx_va = cv[nfold][0], cv[nfold][1]
-        x_tr, y_tr = x_train.loc[idx_tr, :], y_train.loc[idx_tr, :]
-        x_va, y_va = x_train.loc[idx_va, :], y_train.loc[idx_va, :]
-        model = lgb.LGBMClassifier(**params_tuning)
-        model.fit(x_tr,
-                  y_tr,
-                  eval_set=[(x_tr,y_tr), (x_va,y_va)],
-                  early_stopping_rounds=100,
-                  verbose=0,
-                 )
-        y_va_pred = model.predict_proba(x_va)[:,1]
-        metric_va = accuracy_score(y_va, np.where(y_va_pred>=0.5, 1, 0))
-        list_metrics.append(metric_va)
-    
-    # 評価値の計算
-    metrics = np.mean(list_metrics)
-    
-    return metrics
+def objective_func(x_train, y_train):
+    def objective(trial):
+        # 探索するハイパーパラメータ
+        params_tuning = {
+            "num_leaves": trial.suggest_int("num_leaves", 8, 256),
+            "min_data_in_leaf": trial.suggest_int("min_data_in_leaf", 5, 200),
+            "min_sum_hessian_in_leaf": trial.suggest_float("min_sum_hessian_in_leaf", 1e-5, 1e-2, log=True),
+            "feature_fraction": trial.suggest_float("feature_fraction", 0.5, 1.0),
+            "bagging_fraction": trial.suggest_float("bagging_fraction", 0.5, 1.0),
+            "lambda_l1": trial.suggest_float("lambda_l1", 1e-2, 1e2, log=True),
+            "lambda_l2": trial.suggest_float("lambda_l2", 1e-2, 1e2, log=True),
+        }
+        params_tuning.update(params_base)
+        
+        # モデル学習・評価
+        list_metrics = []
+        cv = list(StratifiedKFold(n_splits=5, shuffle=True, random_state=123).split(x_train, y_train))
+        for nfold in np.arange(5):
+            idx_tr, idx_va = cv[nfold][0], cv[nfold][1]
+            x_tr, y_tr = x_train.loc[idx_tr, :], y_train.loc[idx_tr, :]
+            x_va, y_va = x_train.loc[idx_va, :], y_train.loc[idx_va, :]
+            model = lgb.LGBMClassifier(**params_tuning)
+            model.fit(x_tr,
+                    y_tr,
+                    eval_set=[(x_tr,y_tr), (x_va,y_va)],
+                    early_stopping_rounds=100,
+                    verbose=0,
+                    )
+            y_va_pred = model.predict_proba(x_va)[:,1]
+            metric_va = accuracy_score(y_va, np.where(y_va_pred>=0.5, 1, 0))
+            list_metrics.append(metric_va)
+        
+        # 評価値の計算
+        metrics = np.mean(list_metrics)
+        
+        return metrics
+    return objective
 
 # 最適化実行
-def optimize(objective):
+def optimize(objective_func, x_train, y_train):
     sampler = optuna.samplers.TPESampler(seed=123)
     study = optuna.create_study(sampler=sampler, direction="maximize")
-    study.optimize(objective, n_trials=30)
+    study.optimize(objective_func(x_train, y_train), n_trials=30)
 
     trial = study.best_trial
     print("acc(best)={:.4f}".format(trial.value))
     display(trial.params)
 
+    return trial
 
 def train_cv(input_x,
              input_y,
