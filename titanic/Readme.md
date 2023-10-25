@@ -2,13 +2,26 @@
 
 # Log
 
+## 2023.10.25
+
+
+
+## 2023.10.23
+
+* Age
+    * test_dataのAgeをランダムフォレストで補完した
+    * Score: 0.77033
+
+* Todo
+    * 前日継続
+
 ## 2023.10.22
 
 * train, testのデータセット作成関数を実装
 
 * Todo
     * 特徴量の変更
-        * https://qiita.com/jun40vn/items/d8a1f71fae680589e05cを真似してみる
+        * https://qiita.com/jun40vn/items/d8a1f71fae680589e05c を真似してみる
 
 
 
