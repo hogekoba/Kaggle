@@ -1,6 +1,7 @@
 
 import numpy as np
 import pandas as pd
+import seaborn as sns # Samuel Norman Seabornからとっている
 
 # 自作ライブラリインポート
 import util
@@ -22,16 +23,10 @@ def create_dataset(df_base, is_train):
     else:
         return x, id
 
-if __name__ == '__main__':
-
-    # データ取得
-    df_train = pd.read_csv("../../data/input/train.csv") # 学習データ
-    df_test = pd.read_csv("../../data/input/test.csv")   # テストデータ
-
-    # 特徴量探索
-    # ------------ Age ------------
-    # Age を Pclass, Sex, Parch, SibSp からランダムフォレストで推定
-    from sklearn.ensemble import RandomForestRegressor
+# ------------ Age ------------
+from sklearn.ensemble import RandomForestRegressor
+# Age を Pclass, Sex, Parch, SibSp からランダムフォレストで推定
+def calc_feature_of_age(df_train, df_test):
 
     # 推定に使用する項目を指定
     df_all = pd.concat([df_train, df_test], ignore_index=True, sort=False)
@@ -54,34 +49,95 @@ if __name__ == '__main__':
 
     # 推定モデルを使って、テストデータのAgeを予測し、補完
     predictedAges = rfr.predict(unknown_age[:, 1::])
-    print(df_test.Age.isnull())
+    #print(df_test.Age.isnull())
     df_all.loc[(df_all.Age.isnull()), 'Age'] = predictedAges 
     df_test = df_all[df_all['Survived'].isnull()].drop('Survived',axis=1)
+
+    return df_test
+
+# 名前の特徴量作成
+def calc_feature_of_name(df):
+    # Nameから敬称(Title)を抽出し、グルーピング
+    df['Title'] = df['Name'].map(lambda x: x.split(', ')[1].split('. ')[0])
+    df['Title'].replace(['Capt', 'Col', 'Major', 'Dr', 'Rev'], 'Officer', inplace=True)
+    df['Title'].replace(['Don', 'Sir',  'the Countess', 'Lady', 'Dona'], 'Royalty', inplace=True)
+    df['Title'].replace(['Mme', 'Ms'], 'Mrs', inplace=True)
+    df['Title'].replace(['Mlle'], 'Miss', inplace=True)
+    df['Title'].replace(['Jonkheer'], 'Master', inplace=True)
+    sns.barplot(x='Title', y='Survived', data=df, palette='Set3')
+
+    # ------------ Surname ------------
+    # NameからSurname(苗字)を抽出
+    df['Surname'] = df['Name'].map(lambda name:name.split(',')[0].strip())
+
+    # 同じSurname(苗字)の出現頻度をカウント(出現回数が2以上なら家族)
+    df['FamilyGroup'] = df['Surname'].map(df['Surname'].value_counts()) 
+
+    # 家族で16才以下または女性の生存率
+    Female_Child_Group=df.loc[(df['FamilyGroup']>=2) & ((df['Age']<=16) | (df['Sex']=='female'))]
+    Female_Child_Group=Female_Child_Group.groupby('Surname')['Survived'].mean()
+    #print(Female_Child_Group.value_counts())
+
+    # 家族で16才超えかつ男性の生存率
+    Male_Adult_Group=df.loc[(df['FamilyGroup']>=2) & (df['Age']>16) & (df['Sex']=='male')]
+    Male_Adult_List=Male_Adult_Group.groupby('Surname')['Survived'].mean()
+    #print(Male_Adult_List.value_counts())
+
+    # デッドリストとサバイブリストの作成
+    Dead_list=set(Female_Child_Group[Female_Child_Group.apply(lambda x:x==0)].index)
+    Survived_list=set(Male_Adult_List[Male_Adult_List.apply(lambda x:x==1)].index)
+
+    # デッドリストとサバイブリストの表示
+    # print('Dead_list = ', Dead_list)
+    # print('Survived_list = ', Survived_list)
+
+    # デッドリストとサバイブリストをSex, Age, Title に反映させる
+    # 生死の典型パターンに書き換える
+    df.loc[(df['Survived'].isnull()) & (df['Surname'].apply(lambda x:x in Dead_list)),\
+                ['Sex','Age','Title']] = ['male',28.0,'Mr']
+    df.loc[(df['Survived'].isnull()) & (df['Surname'].apply(lambda x:x in Survived_list)),\
+                ['Sex','Age','Title']] = ['female',5.0,'Mrs']
+    
+    return df
+
+DEUBG = 1
+
+if __name__ == '__main__':
+
+    # データ取得
+    df_train = pd.read_csv("../../data/input/train.csv") # 学習データ
+    df_test = pd.read_csv("../../data/input/test.csv")   # テストデータ
+
+    # 特徴量探索
+    df_test = calc_feature_of_age(df_train, df_test)
+    df_train = calc_feature_of_name(df_train)
+    #df_test = calc_feature_of_name(df_test)
 
     # データセット作成
     x_train, y_train, id_train = create_dataset(df_train, True)
     x_test, id_test = create_dataset(df_test, False)
 
     # 最適化パラメータ探索
-    # best_trial = util.optimize(util.objective_func, x_train, y_train)
-    # print(best_trial.params)
-    # print(util.params)
+    if DEUBG == 0:
+        best_trial = util.optimize(util.objective_func, x_train, y_train)
+        print(best_trial.params)
+        print(util.params)
 
-    # util.params.update(best_trial.params)
-
-    # 仮パラメータ
-    util.params = {
-        'lambda_l1': 1.3406343673102123,
-        'lambda_l2': 3.4482904089131434,
-        'boosting_type': 'gbdt',
-        'objective': 'binary',
-        'metric': 'auc',
-        'learning_rate': 0.1,
-        'num_leaves': 16,
-        'n_estimators': 100000,
-        'random_state': 123,
-        'importance_type': 'gain',
-    }
+        util.params.update(best_trial.params)
+    else:
+        # 仮パラメータ
+        util.params = {
+            'lambda_l1': 1.3406343673102123,
+            'lambda_l2': 3.4482904089131434,
+            'boosting_type': 'gbdt',
+            'objective': 'binary',
+            'metric': 'auc',
+            'learning_rate': 0.1,
+            'num_leaves': 16,
+            'n_estimators': 100000,
+            'random_state': 123,
+            'importance_type': 'gain',
+        }
 
     # CV実行
     imp, metrics, model_list = util.train_cv(x_train, y_train, id_train, util.params, n_splits=5)
