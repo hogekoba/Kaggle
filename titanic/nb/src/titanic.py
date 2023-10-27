@@ -15,7 +15,15 @@ def create_dataset(df_base, is_train):
     df_one = pd.get_dummies(df_base[["Sex"]], dummy_na=False, drop_first=False)
     df_one = df_one.astype(np.int64)
 
-    x = pd.concat([df_one, df_base[["Age", "Pclass", "Fare"]]], axis=1)
+    # 使用する特徴量
+    df = df_base[['Pclass','Sex','Age','Fare','Title']]
+
+    # ラベル特徴量をワンホットエンコーディング
+    x = pd.get_dummies(df)
+
+    print(x)
+
+    #x = pd.concat([df_one, df_base[["Age", "Pclass", "Fare", "Title"]]], axis=1)
     id = df_base[["PassengerId"]]
     if is_train:
         y = df_base[["Survived"]]
@@ -51,7 +59,7 @@ def calc_feature_of_age(df_train, df_test):
     predictedAges = rfr.predict(unknown_age[:, 1::])
     #print(df_test.Age.isnull())
     df_all.loc[(df_all.Age.isnull()), 'Age'] = predictedAges 
-    df_test = df_all[df_all['Survived'].isnull()].drop('Survived',axis=1)
+    #df_test = df_all[df_all['Survived'].isnull()].drop('Survived',axis=1)
 
     return df_test
 
@@ -64,7 +72,7 @@ def calc_feature_of_name(df):
     df['Title'].replace(['Mme', 'Ms'], 'Mrs', inplace=True)
     df['Title'].replace(['Mlle'], 'Miss', inplace=True)
     df['Title'].replace(['Jonkheer'], 'Master', inplace=True)
-    sns.barplot(x='Title', y='Survived', data=df, palette='Set3')
+    #sns.barplot(x='Title', y='Survived', data=df, palette='Set3')
 
     # ------------ Surname ------------
     # NameからSurname(苗字)を抽出
@@ -74,18 +82,19 @@ def calc_feature_of_name(df):
     df['FamilyGroup'] = df['Surname'].map(df['Surname'].value_counts()) 
 
     # 家族で16才以下または女性の生存率
-    Female_Child_Group=df.loc[(df['FamilyGroup']>=2) & ((df['Age']<=16) | (df['Sex']=='female'))]
-    Female_Child_Group=Female_Child_Group.groupby('Surname')['Survived'].mean()
+    Female_Child_Group = df.loc[(df['FamilyGroup']>=2) & ((df['Age']<=16) | (df['Sex']=='female'))]
+
+    Female_Child_Group = Female_Child_Group.groupby('Surname')['Survived'].mean()
     #print(Female_Child_Group.value_counts())
 
     # 家族で16才超えかつ男性の生存率
-    Male_Adult_Group=df.loc[(df['FamilyGroup']>=2) & (df['Age']>16) & (df['Sex']=='male')]
-    Male_Adult_List=Male_Adult_Group.groupby('Surname')['Survived'].mean()
+    Male_Adult_Group = df.loc[(df['FamilyGroup']>=2) & (df['Age']>16) & (df['Sex']=='male')]
+    Male_Adult_List = Male_Adult_Group.groupby('Surname')['Survived'].mean()
     #print(Male_Adult_List.value_counts())
 
     # デッドリストとサバイブリストの作成
-    Dead_list=set(Female_Child_Group[Female_Child_Group.apply(lambda x:x==0)].index)
-    Survived_list=set(Male_Adult_List[Male_Adult_List.apply(lambda x:x==1)].index)
+    Dead_list = set(Female_Child_Group[Female_Child_Group.apply(lambda x:x==0)].index)
+    Survived_list = set(Male_Adult_List[Male_Adult_List.apply(lambda x:x==1)].index)
 
     # デッドリストとサバイブリストの表示
     # print('Dead_list = ', Dead_list)
@@ -108,10 +117,16 @@ if __name__ == '__main__':
     df_train = pd.read_csv("../../data/input/train.csv") # 学習データ
     df_test = pd.read_csv("../../data/input/test.csv")   # テストデータ
 
+    # テストデータを学習データの項目にそろえる
+    df_test['Survived'] = np.nan
+
     # 特徴量探索
+    # testデータの欠損Ageをランダムフォレストで補間
     df_test = calc_feature_of_age(df_train, df_test)
+
+    # 名前から生存率を出して、そのグループのAge, Sex, Titleを置き換え
     df_train = calc_feature_of_name(df_train)
-    #df_test = calc_feature_of_name(df_test)
+    df_test = calc_feature_of_name(df_test)
 
     # データセット作成
     x_train, y_train, id_train = create_dataset(df_train, True)
