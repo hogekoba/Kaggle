@@ -118,7 +118,6 @@ def optimize(objective_func, x_train, y_train):
 
 def train_cv(input_x,
              input_y,
-             input_id,
              params,
              n_splits=5,
             ):

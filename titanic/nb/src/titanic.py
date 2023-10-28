@@ -9,36 +9,47 @@ import importlib
 importlib.reload(util) # ライブラリ更新時に対応
 
 # データセット作成
-def create_dataset(df_base, is_train):
-    # 特徴量
-    # 性別をベクトル化
-    df_one = pd.get_dummies(df_base[["Sex"]], dummy_na=False, drop_first=False)
-    df_one = df_one.astype(np.int64)
-
-    # 使用する特徴量
-    df = df_base[['Pclass','Sex','Age','Fare','Title']]
+def create_dataset(df, feature_list):
+    # 推定に使用する項目を指定
+    df_feature = df[feature_list]
 
     # ラベル特徴量をワンホットエンコーディング
-    x = pd.get_dummies(df)
+    df_feature = pd.get_dummies(df_feature)
 
-    print(x)
+    # データセットを trainとtestに分割
+    df_train = df_feature[df_feature['Survived'].notnull()]
+    df_test = df_feature[df_feature['Survived'].isnull()].drop('Survived',axis=1)
 
-    #x = pd.concat([df_one, df_base[["Age", "Pclass", "Fare", "Title"]]], axis=1)
-    id = df_base[["PassengerId"]]
-    if is_train:
-        y = df_base[["Survived"]]
-        return x, y, id
-    else:
-        return x, id
+    train_x = df_train.drop("Survived", axis=1)
+    train_y = df_train[["Survived"]] # 2重[]
+
+    test_x = df_test
+
+    return train_x, train_y, test_x
+
+    # # 使用する特徴量
+    # df = df_base[feature_list]
+
+    # # ラベル特徴量をワンホットエンコーディング
+    # x = pd.get_dummies(df)
+
+    # print(x)
+
+    # #x = pd.concat([df_one, df_base[["Age", "Pclass", "Fare", "Title"]]], axis=1)
+    # id = df_base[["PassengerId"]]
+    # if is_train:
+    #     y = df_base[["Survived"]]
+    #     return x, y, id
+    # else:
+    #     return x, id
 
 # ------------ Age ------------
 from sklearn.ensemble import RandomForestRegressor
 # Age を Pclass, Sex, Parch, SibSp からランダムフォレストで推定
-def calc_feature_of_age(df_train, df_test):
+def calc_feature_of_age(df, feature_list):
 
     # 推定に使用する項目を指定
-    df_all = pd.concat([df_train, df_test], ignore_index=True, sort=False)
-    age_df = df_all[['Age', 'Pclass','Sex','Parch','SibSp']]
+    age_df = df[['Age', 'Pclass','Sex','Parch','SibSp']]
 
     # ラベル特徴量をワンホットエンコーディング
     age_df = pd.get_dummies(age_df)
@@ -58,13 +69,15 @@ def calc_feature_of_age(df_train, df_test):
     # 推定モデルを使って、テストデータのAgeを予測し、補完
     predictedAges = rfr.predict(unknown_age[:, 1::])
     #print(df_test.Age.isnull())
-    df_all.loc[(df_all.Age.isnull()), 'Age'] = predictedAges 
+    df.loc[(df.Age.isnull()), 'Age'] = predictedAges 
     #df_test = df_all[df_all['Survived'].isnull()].drop('Survived',axis=1)
 
-    return df_test
+    feature_list.append("Age")
+
+    return df, feature_list
 
 # 名前の特徴量作成
-def calc_feature_of_name(df):
+def calc_feature_of_name(df, feature_list):
     # Nameから敬称(Title)を抽出し、グルーピング
     df['Title'] = df['Name'].map(lambda x: x.split(', ')[1].split('. ')[0])
     df['Title'].replace(['Capt', 'Col', 'Major', 'Dr', 'Rev'], 'Officer', inplace=True)
@@ -107,7 +120,67 @@ def calc_feature_of_name(df):
     df.loc[(df['Survived'].isnull()) & (df['Surname'].apply(lambda x:x in Survived_list)),\
                 ['Sex','Age','Title']] = ['female',5.0,'Mrs']
     
-    return df
+    feature_list.extend(["Sex", "Title"])
+
+    return df, feature_list
+
+# 欠損値を Embarked='S', Pclass=3 の平均値で補完
+def calc_feature_of_fare(df, feature_list):
+    fare = df.loc[(df['Embarked'] == 'S') & (df['Pclass'] == 3), 'Fare'].median()
+    df['Fare'] = df['Fare'].fillna(fare)
+
+    feature_list.append("Fare")
+    return df, feature_list
+
+# Family = SibSp + Parch + 1 を特徴量とし、グルーピング
+def calc_feature_of_SibSp_Parch(df, feature_list):
+    # 2～4：生存大
+    # 1, 5,6,7：中
+    # 8以上:小
+    df['Family'] = df['SibSp'] + df['Parch'] + 1
+    df.loc[(df['Family']>=2) & (df['Family']<=4), 'Family_label'] = 2
+    df.loc[(df['Family']>=5) & (df['Family']<=7) | (df['Family']==1), 'Family_label'] = 1  # == に注意
+    df.loc[(df['Family']>=8), 'Family_label'] = 0
+
+    feature_list.append("Family_label")
+    return df, feature_list
+
+# ----------- Ticket ----------------
+# 生存率で3つにグルーピング
+def calc_feature_of_ticket(df, feature_list):
+    # 同一Ticketナンバーの人が何人いるかを特徴量として抽出
+    Ticket_Count = dict(df['Ticket'].value_counts())
+    df['TicketGroup'] = df['Ticket'].map(Ticket_Count)
+    #sns.barplot(x='TicketGroup', y='Survived', data=df, palette='Set3')
+    #plt.show()
+
+    # 生存率で3つにグルーピング
+    df.loc[(df['TicketGroup']>=2) & (df['TicketGroup']<=4), 'Ticket_label'] = 2
+    df.loc[(df['TicketGroup']>=5) & (df['TicketGroup']<=8) | (df['TicketGroup']==1), 'Ticket_label'] = 1  
+    df.loc[(df['TicketGroup']>=11), 'Ticket_label'] = 0
+    #sns.barplot(x='Ticket_label', y='Survived', data=df, palette='Set3')
+    #plt.show()
+
+    feature_list.append("Ticket_label")
+
+    return df, feature_list
+
+# Cabinの先頭文字を特徴量とする(欠損値は U )
+def calc_feature_of_cabin(df, feature_list):
+    df['Cabin'] = df['Cabin'].fillna('Unknown')
+    df['Cabin_label'] = df['Cabin'].str.get(0)
+    #sns.barplot(x='Cabin_label', y='Survived', data=df, palette='Set3')
+    #plt.show()
+    feature_list.append("Cabin_label")
+
+    return df, feature_list
+
+# 欠損値は一番乗船者が多かったSで補完
+def calc_feature_of_embarked(df, feature_list):
+    df['Embarked'] = df['Embarked'].fillna('S') 
+    feature_list.append("Embarked")
+
+    return df, feature_list
 
 DEUBG = 1
 
@@ -120,17 +193,38 @@ if __name__ == '__main__':
     # テストデータを学習データの項目にそろえる
     df_test['Survived'] = np.nan
 
+    # 学習とテストを混合
+    df = pd.concat([df_train, df_test], ignore_index=True, sort=False)
+
     # 特徴量探索
+    feature_list = ["Survived", "Sex", "Pclass"]
+
     # testデータの欠損Ageをランダムフォレストで補間
-    df_test = calc_feature_of_age(df_train, df_test)
+    df, feature_list = calc_feature_of_age(df, feature_list)
 
     # 名前から生存率を出して、そのグループのAge, Sex, Titleを置き換え
-    df_train = calc_feature_of_name(df_train)
-    df_test = calc_feature_of_name(df_test)
+    df, feature_list = calc_feature_of_name(df, feature_list)
+
+    # 欠損値を Embarked='S', Pclass=3 の平均値で補完
+    df, feature_list = calc_feature_of_fare(df, feature_list)
+
+    # 家族人数でグループ化
+    df, feature_list = calc_feature_of_SibSp_Parch(df, feature_list)
+
+    # Ticket番号でグループ化
+    df, feature_list = calc_feature_of_ticket(df, feature_list)
+
+    # Cabin
+    df, feature_list = calc_feature_of_cabin(df, feature_list)
+
+    # Embarked
+    df, feature_list = calc_feature_of_embarked(df, feature_list)
+
+    feature_list = list(set(feature_list))
+    print(feature_list)
 
     # データセット作成
-    x_train, y_train, id_train = create_dataset(df_train, True)
-    x_test, id_test = create_dataset(df_test, False)
+    x_train, y_train, x_test = create_dataset(df, feature_list)
 
     # 最適化パラメータ探索
     if DEUBG == 0:
@@ -155,7 +249,7 @@ if __name__ == '__main__':
         }
 
     # CV実行
-    imp, metrics, model_list = util.train_cv(x_train, y_train, id_train, util.params, n_splits=5)
+    imp, metrics, model_list = util.train_cv(x_train, y_train, util.params, n_splits=5)
 
     # 予測
 
