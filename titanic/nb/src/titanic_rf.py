@@ -22,12 +22,18 @@ def create_dataset(df, feature_list):
     df_train = df_feature[df_feature['Survived'].notnull()]
     df_test = df_feature[df_feature['Survived'].isnull()].drop('Survived',axis=1)
 
-    train_x = df_train.drop("Survived", axis=1)
-    train_y = df_train[["Survived"]] # 2重[]
+    # train_x = df_train.drop("Survived", axis=1)
+    # train_y = df_train[["Survived"]] # 2重[]
 
-    test_x = df_test
+    #print(df_train.head())
 
-    return train_x, train_y, test_x
+    # データフレームをnumpyに変換
+    X = df_train.drop('Survived',axis=1).values
+    y = df_train['Survived'].values
+    y = y.astype('int')
+    test_x = df_test.values    
+
+    return X, y, test_x
 
 # ------------ Age ------------
 from sklearn.ensemble import RandomForestRegressor
@@ -210,57 +216,75 @@ if __name__ == '__main__':
     print(feature_list)
 
     # データセット作成
-    x_train, y_train, x_test = create_dataset(df, feature_list)
+    X, y, test_x = create_dataset(df, feature_list)
 
-    # 最適化パラメータ探索
-    n_splits = 10
-    if DEUBG == 0:
-        best_trial = util.optimize(util.objective_func, x_train, y_train, n_splits)
-        print(best_trial.params)
-        print(util.params)
+    # print(X)
+    # print(y)
+    # print(test_x)
 
-        util.params.update(best_trial.params)
-    else:
-        # 仮パラメータ
-        util.params = {
-            'lambda_l1': 1.3406343673102123,
-            'lambda_l2': 3.4482904089131434,
-            'boosting_type': 'gbdt',
-            'objective': 'binary',
-            'metric': 'auc',
-            'learning_rate': 0.1,
-            'num_leaves': 16,
-            'n_estimators': 100000,
-            'random_state': 123,
-            'importance_type': 'gain',
-        }
+    # ----------- 推定モデル構築 ---------------
+    from sklearn.feature_selection import SelectKBest
+    from sklearn.ensemble import RandomForestClassifier
+    from sklearn.pipeline import make_pipeline
+    from sklearn.model_selection import cross_validate
 
-    # CV実行
-    imp, metrics, model_list = util.train_cv(x_train, y_train, util.params, n_splits)
+    # 採用する特徴量を25個から20個に絞り込む
+    select = SelectKBest(k = 20)
 
-    # 重要度
-    print(imp.sort_values("imp", ascending=False, ignore_index=True))
+    clf = RandomForestClassifier(random_state = 10, 
+                                warm_start = True,  # 既にフィットしたモデルに学習を追加 
+                                n_estimators = 26,
+                                max_depth = 6, 
+                                max_features = 'sqrt')
+    pipeline = make_pipeline(select, clf)
+    pipeline.fit(X, y)
 
-    # 結果を辞書に保存
-    solution = {}
+    # フィット結果の表示
+    cv_result = cross_validate(pipeline, X, y, cv= 10)
+    print('mean_score = ', np.mean(cv_result['test_score']))
+    print('mean_std = ', np.std(cv_result['test_score']))
+
+    # --------　採用した特徴量 ---------------
+    # 採用の可否状況
+    mask= select.get_support()
+
+    # 項目のリスト
+    list_col = list(df.columns[1:])
+
+    # 項目別の採用可否の一覧表
+    # for i, j in enumerate(list_col):
+    #     print('No'+str(i+1), j,'=',  mask[i])
+
+    # シェイプの確認
+    X_selected = select.transform(X)
+    #print('X.shape={}, X_selected.shape={}'.format(X.shape, X_selected.shape))
+
+    # ----- Submit dataの作成　------- 
+    PassengerId = df_test['PassengerId']
+    predictions = pipeline.predict(test_x)
+    submission = pd.DataFrame({"PassengerId": PassengerId, "Survived": predictions.astype(np.int32)})
+    submission.to_csv("../../data/output/003/submission_rf.csv", index=False)
+
+    # # 結果を辞書に保存
+    # solution = {}
     
-    # 各モデルで予測
-    for i, model in enumerate(model_list):
-        solution[str(i) + "_model"] = model.predict(x_test)
+    # # 各モデルで予測
+    # for i, model in enumerate(model_list):
+    #     solution[str(i) + "_model"] = model.predict(x_test)
 
-    # 辞書からDataFrameに変更
-    solution = pd.DataFrame(solution)
+    # # 辞書からDataFrameに変更
+    # solution = pd.DataFrame(solution)
 
-    # 多数決 (最頻値)を取得
-    solution_max = solution.mode(axis = 1).values
-    # なぜか Nanが2列目についてくるため2列目を削除
-    solution_max = [[int(x[0])] for x in list(solution_max)]
+    # # 多数決 (最頻値)を取得
+    # solution_max = solution.mode(axis = 1).values
+    # # なぜか Nanが2列目についてくるため2列目を削除
+    # solution_max = [[int(x[0])] for x in list(solution_max)]
 
-    # PassengerIdを取得
-    PassengerId = np.array(df_test["PassengerId"]).astype(int)
+    # # PassengerIdを取得
+    # PassengerId = np.array(df_test["PassengerId"]).astype(int)
 
-    # my_prediction(予測データ）とPassengerIdをデータフレームへ落とし込む
-    my_solution = pd.DataFrame(solution_max, index = PassengerId, columns = ["Survived"])
+    # # my_prediction(予測データ）とPassengerIdをデータフレームへ落とし込む
+    # my_solution = pd.DataFrame(solution_max, index = PassengerId, columns = ["Survived"])
 
-    # submission.csvとして書き出し
-    my_solution.to_csv("../../data/output/003/submission.csv", index_label = ["PassengerId"])
+    # # submission.csvとして書き出し
+    # my_solution.to_csv("../../data/output/003/submission.csv", index_label = ["PassengerId"])

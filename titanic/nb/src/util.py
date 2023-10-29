@@ -66,7 +66,7 @@ params = {
 }
 
 # 目的関数
-def objective_func(x_train, y_train):
+def objective_func(x_train, y_train, n_splits):
     def objective(trial):
         # 探索するハイパーパラメータ
         params_tuning = {
@@ -82,8 +82,8 @@ def objective_func(x_train, y_train):
         
         # モデル学習・評価
         list_metrics = []
-        cv = list(StratifiedKFold(n_splits=5, shuffle=True, random_state=123).split(x_train, y_train))
-        for nfold in np.arange(5):
+        cv = list(StratifiedKFold(n_splits, shuffle=True, random_state=123).split(x_train, y_train))
+        for nfold in np.arange(n_splits):
             idx_tr, idx_va = cv[nfold][0], cv[nfold][1]
             x_tr, y_tr = x_train.loc[idx_tr, :], y_train.loc[idx_tr, :]
             x_va, y_va = x_train.loc[idx_va, :], y_train.loc[idx_va, :]
@@ -105,10 +105,10 @@ def objective_func(x_train, y_train):
     return objective
 
 # 最適化実行
-def optimize(objective_func, x_train, y_train):
+def optimize(objective_func, x_train, y_train, nsplits):
     sampler = optuna.samplers.TPESampler(seed=123)
     study = optuna.create_study(sampler=sampler, direction="maximize")
-    study.optimize(objective_func(x_train, y_train), n_trials=30)
+    study.optimize(objective_func(x_train, y_train, nsplits), n_trials=30)
 
     trial = study.best_trial
     print("acc(best)={:.4f}".format(trial.value))
@@ -141,15 +141,15 @@ def train_cv(input_x,
         # インデックスのデータを取得
         x_tr, y_tr = input_x.loc[idx_tr, :], input_y.loc[idx_tr, :]
         x_va, y_va = input_x.loc[idx_va, :], input_y.loc[idx_va, :]
-        print("x_train", x_tr.shape, "y_valid", y_tr.shape)
-        print("x_valid", x_va.shape, "y_valid", y_va.shape)
+        # print("x_train", x_tr.shape, "y_valid", y_tr.shape)
+        # print("x_valid", x_va.shape, "y_valid", y_va.shape)
 
-        # Yデータの偏り確認
-        print("y_train:{:.3f}, y_tr:{:.3f}, y_va:{:.3f}".format(
-            input_y["Survived"].mean(),
-            y_tr["Survived"].mean(),
-            y_va["Survived"].mean(),
-        ))
+        # # Yデータの偏り確認
+        # print("y_train:{:.3f}, y_tr:{:.3f}, y_va:{:.3f}".format(
+        #     input_y["Survived"].mean(),
+        #     y_tr["Survived"].mean(),
+        #     y_va["Survived"].mean(),
+        # ))
 
         # LightGBMモデル作成
         model = lgb.LGBMClassifier(**params)
