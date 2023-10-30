@@ -8,6 +8,17 @@ import util
 import importlib
 importlib.reload(util) # ライブラリ更新時に対応
 
+# バリデーション
+from sklearn.model_selection import train_test_split, KFold, StratifiedKFold
+# 評価指標
+from sklearn.metrics import accuracy_score, roc_auc_score, confusion_matrix
+
+from sklearn.feature_selection import SelectKBest
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.pipeline import make_pipeline
+from sklearn.model_selection import cross_validate
+
+
 # データセット作成
 def create_dataset(df, feature_list):
     # 推定に使用する項目を指定
@@ -176,6 +187,140 @@ def calc_feature_of_embarked(df, feature_list):
 
 DEUBG = 1
 
+def train_rf_cv(input_x, input_y, n_splits=5):
+    # 結果格納用
+    metrics = []
+    imp = pd.DataFrame()
+    model_list = []
+
+    # K分割検証法で学習用と検証用に分ける
+    cv = list(StratifiedKFold(n_splits=n_splits, shuffle=True, random_state=123).split(input_x, input_y))
+
+    # ループ回数分 LightGBMを試す
+    for nfold in np.arange(n_splits):
+        # 区切り線
+        print("-"*20, nfold, "-"*20)
+
+        # 学習データ、検証データのインデックスを取得
+        idx_tr, idx_va = cv[nfold][0], cv[nfold][1]
+        
+        # インデックスのデータを取得
+        x_tr, y_tr = input_x[idx_tr.tolist()], input_y[idx_tr.tolist()]
+        x_va, y_va = input_x[idx_va.tolist()], input_y[idx_va.tolist()]
+        # print("x_train", x_tr.shape, "y_valid", y_tr.shape)
+        # print("x_valid", x_va.shape, "y_valid", y_va.shape)
+
+        # Yデータの偏り確認
+        print("y_train:{:.3f}, y_tr:{:.3f}, y_va:{:.3f}".format(
+            input_y.mean(),
+            y_tr.mean(),
+            y_va.mean(),
+        ))
+
+        # 採用する特徴量を25個から20個に絞り込む
+        select = SelectKBest(k = 20)
+
+        # モデルパラメータ
+        clf = RandomForestClassifier(random_state = 10, 
+                                    warm_start = True,  # 既にフィットしたモデルに学習を追加 
+                                    n_estimators = 26,
+                                    max_depth = 6, 
+                                    max_features = 'sqrt')
+        
+        # モデル作成
+        pipeline = make_pipeline(select, clf)
+        pipeline.fit(x_tr, y_tr)
+        model_list.append(pipeline)
+
+        y_tr_pred = pipeline.predict(x_tr)
+        y_va_pred = pipeline.predict(x_va)
+
+        # 正解と予測から正解率を算出
+        metric_tr = accuracy_score(y_tr, y_tr_pred)
+        metric_va = accuracy_score(y_va, y_va_pred)
+        print("[accuracy] tr: {:.2f}, va: {:.2f}".format(metric_tr, metric_va))   
+
+        # 全体結果に格納
+        metrics.append([nfold, metric_tr, metric_va])
+        
+
+    # まとめ結果を表示
+    print("-"*20, "result", "-"*20)
+    metrics = np.array(metrics)
+    print(metrics)
+
+    # 正確性の平均、偏差
+    print("[cv ] tr: {:.2f}+-{:.2f}, va: {:.2f}+-{:.2f}".format(
+        metrics[:,1].mean(), metrics[:,1].std(),
+        metrics[:,2].mean(), metrics[:,2].std(),
+    ))
+
+    print("Done.")
+    
+    return metrics, model_list
+
+def train_rf_my_cv(X, y, test_x):
+    # CV実行
+    n_splits = 10
+    metrics, model_list = train_rf_cv(X, y, n_splits)
+
+    # 結果を辞書に保存
+    solution = {}
+    
+    # 各モデルで予測
+    for i, model in enumerate(model_list):
+        solution[str(i) + "_model"] = model.predict(test_x)
+
+    # 辞書からDataFrameに変更
+    solution = pd.DataFrame(solution)
+
+    # 多数決 (最頻値)を取得
+    solution_max = solution.mode(axis = 1).values
+    # なぜか Nanが2列目についてくるため2列目を削除
+    solution_max = [[int(x[0])] for x in list(solution_max)]
+
+    predictions = [x[0] for x in solution_max]
+
+    return predictions
+
+def train_rf_lib_cv(X, y, test_x):
+
+    # 採用する特徴量を25個から20個に絞り込む
+    select = SelectKBest(k = 20)
+
+    clf = RandomForestClassifier(random_state = 10, 
+                                warm_start = True,  # 既にフィットしたモデルに学習を追加 
+                                n_estimators = 26,
+                                max_depth = 6, 
+                                max_features = 'sqrt')
+    pipeline = make_pipeline(select, clf)
+    pipeline.fit(X, y)
+
+    # フィット結果の表示
+    cv_result = cross_validate(pipeline, X, y, cv= 10)
+    print('mean_score = ', np.mean(cv_result['test_score']))
+    print('mean_std = ', np.std(cv_result['test_score']))
+
+    # --------　採用した特徴量 ---------------
+    # 採用の可否状況
+    mask= select.get_support()
+
+    # 項目のリスト
+    list_col = list(df.columns[1:])
+
+    # 項目別の採用可否の一覧表
+    for i, j in enumerate(list_col):
+        print('No'+str(i+1), j,'=',  mask[i])
+
+    # シェイプの確認
+    X_selected = select.transform(X)
+    print('X.shape={}, X_selected.shape={}'.format(X.shape, X_selected.shape))
+
+    # 推測
+    predictions = pipeline.predict(test_x)
+
+    return predictions
+
 if __name__ == '__main__':
 
     # データ取得
@@ -223,68 +368,16 @@ if __name__ == '__main__':
     # print(test_x)
 
     # ----------- 推定モデル構築 ---------------
-    from sklearn.feature_selection import SelectKBest
-    from sklearn.ensemble import RandomForestClassifier
-    from sklearn.pipeline import make_pipeline
-    from sklearn.model_selection import cross_validate
-
-    # 採用する特徴量を25個から20個に絞り込む
-    select = SelectKBest(k = 20)
-
-    clf = RandomForestClassifier(random_state = 10, 
-                                warm_start = True,  # 既にフィットしたモデルに学習を追加 
-                                n_estimators = 26,
-                                max_depth = 6, 
-                                max_features = 'sqrt')
-    pipeline = make_pipeline(select, clf)
-    pipeline.fit(X, y)
-
-    # フィット結果の表示
-    cv_result = cross_validate(pipeline, X, y, cv= 10)
-    print('mean_score = ', np.mean(cv_result['test_score']))
-    print('mean_std = ', np.std(cv_result['test_score']))
-
-    # --------　採用した特徴量 ---------------
-    # 採用の可否状況
-    mask= select.get_support()
-
-    # 項目のリスト
-    list_col = list(df.columns[1:])
-
-    # 項目別の採用可否の一覧表
-    # for i, j in enumerate(list_col):
-    #     print('No'+str(i+1), j,'=',  mask[i])
-
-    # シェイプの確認
-    X_selected = select.transform(X)
-    #print('X.shape={}, X_selected.shape={}'.format(X.shape, X_selected.shape))
+    file_name = ""
+    if 1:
+        predictions = train_rf_my_cv(X, y, test_x)
+        file_name = "../../data/output/003/submission_rf_cv.csv"
+    else:
+        predictions = train_rf_lib_cv(X, y, test_x)
+        file_name = "../../data/output/003/submission_rf.csv"
 
     # ----- Submit dataの作成　------- 
     PassengerId = df_test['PassengerId']
-    predictions = pipeline.predict(test_x)
-    submission = pd.DataFrame({"PassengerId": PassengerId, "Survived": predictions.astype(np.int32)})
-    submission.to_csv("../../data/output/003/submission_rf.csv", index=False)
+    submission = pd.DataFrame({"PassengerId": PassengerId, "Survived": predictions})
+    submission.to_csv(file_name, index=False)
 
-    # # 結果を辞書に保存
-    # solution = {}
-    
-    # # 各モデルで予測
-    # for i, model in enumerate(model_list):
-    #     solution[str(i) + "_model"] = model.predict(x_test)
-
-    # # 辞書からDataFrameに変更
-    # solution = pd.DataFrame(solution)
-
-    # # 多数決 (最頻値)を取得
-    # solution_max = solution.mode(axis = 1).values
-    # # なぜか Nanが2列目についてくるため2列目を削除
-    # solution_max = [[int(x[0])] for x in list(solution_max)]
-
-    # # PassengerIdを取得
-    # PassengerId = np.array(df_test["PassengerId"]).astype(int)
-
-    # # my_prediction(予測データ）とPassengerIdをデータフレームへ落とし込む
-    # my_solution = pd.DataFrame(solution_max, index = PassengerId, columns = ["Survived"])
-
-    # # submission.csvとして書き出し
-    # my_solution.to_csv("../../data/output/003/submission.csv", index_label = ["PassengerId"])
